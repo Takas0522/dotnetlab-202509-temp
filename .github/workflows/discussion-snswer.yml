@@ -198,21 +198,25 @@ jobs:
 
       - name: Post AI Response as Comment
         run: |
-          # AI回答を安全にエスケープしてからコメント投稿
+          # AI回答を安全に投稿
           if [ -f ai_response.txt ]; then
-            # バッククォートとその他の特殊文字を適切にエスケープ
-            AI_RESPONSE_ESCAPED=$(cat ai_response.txt | \
-              sed 's/`/\\`/g' | \
-              sed 's/\\/\\\\/g' | \
-              sed 's/"/\\"/g' | \
-              sed "s/'/\\'/g")
-            
             echo "Posting AI response as comment..."
-            echo "Response length: ${#AI_RESPONSE_ESCAPED}"
+            echo "Response file size: $(wc -c < ai_response.txt) bytes"
             
-            # jqを使用して安全にJSONペイロードを構築
-            gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \
-              --input - <<< "$(jq -n --arg body "$AI_RESPONSE_ESCAPED" '{body: $body}')"
+            # AI回答をファイルから直接読み取り、jqでJSONエスケープ
+            AI_RESPONSE=$(cat ai_response.txt)
+            echo "Raw response length: ${#AI_RESPONSE}"
+            
+            # jqを使用して安全にJSONペイロードを作成
+            JSON_PAYLOAD=$(jq -n --arg content "$AI_RESPONSE" '{body: $content}')
+            
+            echo "JSON payload created successfully"
+            echo "Payload length: ${#JSON_PAYLOAD}"
+            
+            # GitHub APIを使用してコメント投稿
+            echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments --input -
+            
+            echo "Comment posted successfully"
           else
             echo "No AI response file found"
             gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \

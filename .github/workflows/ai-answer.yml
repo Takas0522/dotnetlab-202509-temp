@@ -153,6 +153,30 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
 
       - name: Post AI Response as Comment
-        run: gh issue comment ${{ github.event.issue.number }} --body "${{ steps.ai.outputs.response }}"
+        run: |
+          # AI回答を安全に投稿
+          if [ -f ai_response.txt ]; then
+            echo "Posting AI response as comment..."
+            echo "Response file size: $(wc -c < ai_response.txt) bytes"
+            
+            # AI回答をファイルから直接読み取り、jqでJSONエスケープ
+            AI_RESPONSE=$(cat ai_response.txt)
+            echo "Raw response length: ${#AI_RESPONSE}"
+            
+            # jqを使用して安全にJSONペイロードを作成
+            JSON_PAYLOAD=$(jq -n --arg content "$AI_RESPONSE" '{body: $content}')
+            
+            echo "JSON payload created successfully"
+            echo "Payload length: ${#JSON_PAYLOAD}"
+            
+            # GitHub APIを使用してコメント投稿
+            echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --input -
+            
+            echo "Comment posted successfully"
+          else
+            echo "No AI response file found"
+            gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
+              -f body="AI回答の生成に失敗しました。ログを確認してください。"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
