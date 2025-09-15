@@ -42,19 +42,37 @@ jobs:
           ISSUE_TITLE="${{ github.event.issue.title }}"
           CODE_SUMMARY="context/code.tar.gz"
           
+          # Issue内容をエスケープして安全にする  
+          ISSUE_BODY_SAFE=$(echo "$ISSUE_BODY" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
+          ISSUE_TITLE_SAFE=$(echo "$ISSUE_TITLE" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
+          
+          echo "Escaped Issue Title: $ISSUE_TITLE_SAFE"
+          echo "Escaped Issue Body length: ${#ISSUE_BODY_SAFE}"
+          
           # API呼び出し
           echo "Calling Azure OpenAI API..."
-          RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST "https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION" \
+          echo "URL: https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION"
+          
+          RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
+            "https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION" \
             -H "Content-Type: application/json" \
             -H "api-key: $AZURE_OPENAI_API_KEY" \
-            -d '{
-              "messages": [
-                {"role": "system", "content": "あなたは提供されたコードコンテキストに基づいて回答を提供するアシスタントです。"},
-                {"role": "user", "content": "Issueタイトルは: '"$ISSUE_TITLE"'. Issueボディは: '"$ISSUE_BODY"'. 提供されたコードコンテキストに基づいて、問題に対する詳細な回答を提供してください。"}
+            --data-raw "{
+              \"messages\": [
+                {\"role\": \"system\", \"content\": \"You are an assistant that provides answers based on code context. Please respond in Japanese.\"},
+                {\"role\": \"user\", \"content\": \"Issue Title: $ISSUE_TITLE_SAFE. Issue Body: $ISSUE_BODY_SAFE. Please provide a detailed answer based on the code context.\"}
               ],
-              "max_tokens": 500,
-              "temperature": 0.7
-            }')
+              \"max_tokens\": 500,
+              \"temperature\": 0.7
+            }")
+          
+          curl_exit_code=$?
+          echo "curl command completed with exit code: $curl_exit_code"
+          
+          if [ $curl_exit_code -ne 0 ]; then
+            echo "curl command failed with exit code: $curl_exit_code"
+            exit $curl_exit_code
+          fi
           
           # HTTPステータスコードとレスポンスを分離
           HTTP_CODE=$(echo "$RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
