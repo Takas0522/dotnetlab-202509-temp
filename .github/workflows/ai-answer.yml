@@ -17,6 +17,11 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+          
       - name: Collect Code Context
         run: |
 
@@ -66,11 +71,34 @@ jobs:
             echo "No code context file found"
           fi
           # Issue内容をエスケープして安全にする  
-          ISSUE_BODY_SAFE=$(echo "$ISSUE_BODY" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
-          ISSUE_TITLE_SAFE=$(echo "$ISSUE_TITLE" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
+          ISSUE_BODY_SAFE=$(echo "$ISSUE_BODY" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr -d '\000-\037' | tr '\n' ' ' | tr '\r' ' ')
+          ISSUE_TITLE_SAFE=$(echo "$ISSUE_TITLE" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr -d '\000-\037' | tr '\n' ' ' | tr '\r' ' ')
+          CODE_CONTEXT_SAFE=$(echo "$CODE_CONTEXT" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g' | tr -d '\000-\037' | tr '\n' ' ' | tr '\r' ' ')
           
-          echo "Escaped Issue Title: $ISSUE_TITLE_SAFE"
+          echo "Escaped Issue Title: ${ISSUE_TITLE_SAFE:0:50}..."
           echo "Escaped Issue Body length: ${#ISSUE_BODY_SAFE}"
+          echo "Escaped Code Context length: ${#CODE_CONTEXT_SAFE}"
+          
+          # API呼び出し用のJSONペイロードを安全に構築
+          echo "Creating JSON payload..."
+          SYSTEM_MSG="You are a helpful assistant that analyzes code and provides solutions. Respond in Japanese."
+          USER_MSG="Issue Title: $ISSUE_TITLE_SAFE. Issue Body: $ISSUE_BODY_SAFE. Code Context: $CODE_CONTEXT_SAFE. Based on the provided code context, please analyze the issue and provide a detailed solution or explanation."
+          
+          # jqを使用して安全なJSON構築
+          JSON_PAYLOAD=$(jq -n \
+            --arg system_msg "$SYSTEM_MSG" \
+            --arg user_msg "$USER_MSG" \
+            '{
+              "messages": [
+                {"role": "system", "content": $system_msg},
+                {"role": "user", "content": $user_msg}
+              ],
+              "max_tokens": 800,
+              "temperature": 0.3
+            }')
+          
+          echo "JSON payload created successfully"
+          echo "Payload length: ${#JSON_PAYLOAD}"
           
           # API呼び出し
           echo "Calling Azure OpenAI API..."
@@ -80,14 +108,7 @@ jobs:
             "https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION" \
             -H "Content-Type: application/json" \
             -H "api-key: $AZURE_OPENAI_API_KEY" \
-            --data-raw "{
-              \"messages\": [
-                {\"role\": \"system\", \"content\": \"You are a helpful assistant that analyzes code and provides solutions. Respond in Japanese. Here is the code context: $CODE_CONTEXT\"},
-                {\"role\": \"user\", \"content\": \"Issue Title: $ISSUE_TITLE_SAFE. Issue Body: $ISSUE_BODY_SAFE. Based on the provided code context, please analyze the issue and provide a detailed solution or explanation.\"}
-              ],
-              \"max_tokens\": 800,
-              \"temperature\": 0.3
-            }")
+            -d "$JSON_PAYLOAD")
           
           curl_exit_code=$?
           echo "curl command completed with exit code: $curl_exit_code"
