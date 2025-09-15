@@ -26,10 +26,25 @@ jobs:
       - name: Call Azure OpenAI API
         id: ai
         run: |
+          # 環境変数の確認
+          echo "Checking environment variables..."
+          echo "AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:0:20}..."
+          echo "AZURE_OPENAI_DEPLOYMENT: $AZURE_OPENAI_DEPLOYMENT"
+          echo "AZURE_OPENAI_API_VERSION: $AZURE_OPENAI_API_VERSION"
+          
+          # jqの存在確認
+          if ! command -v jq &> /dev/null; then
+            echo "jq is not installed, installing..."
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          
           ISSUE_BODY="${{ github.event.issue.body }}"
           ISSUE_TITLE="${{ github.event.issue.title }}"
           CODE_SUMMARY="context/code.tar.gz"
-          RESPONSE=$(curl -s -X POST "https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION" \
+          
+          # API呼び出し
+          echo "Calling Azure OpenAI API..."
+          RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST "https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION" \
             -H "Content-Type: application/json" \
             -H "api-key: $AZURE_OPENAI_API_KEY" \
             -d '{
@@ -40,8 +55,33 @@ jobs:
               "max_tokens": 500,
               "temperature": 0.7
             }')
-          echo "$RESPONSE" | jq -r '.choices[0].message.content' > ai_response.txt
-          echo "::set-output name=response::$(cat ai_response.txt)"
+          
+          # HTTPステータスコードとレスポンスを分離
+          HTTP_CODE=$(echo "$RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+          JSON_RESPONSE=$(echo "$RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
+          
+          echo "HTTP Status Code: $HTTP_CODE"
+          echo "API Response: $JSON_RESPONSE"
+          
+          # HTTPステータスコードをチェック
+          if [ "$HTTP_CODE" -ne 200 ]; then
+            echo "API call failed with HTTP code: $HTTP_CODE"
+            echo "Response: $JSON_RESPONSE"
+            exit 1
+          fi
+          
+          # JSONレスポンスの処理
+          if echo "$JSON_RESPONSE" | jq -e '.choices[0].message.content' > /dev/null 2>&1; then
+            AI_CONTENT=$(echo "$JSON_RESPONSE" | jq -r '.choices[0].message.content')
+            echo "$AI_CONTENT" > ai_response.txt
+            echo "response<<EOF" >> $GITHUB_OUTPUT
+            echo "$AI_CONTENT" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "Failed to parse API response"
+            echo "Response: $JSON_RESPONSE"
+            exit 1
+          fi
         env:
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }} # 例: https://<your-resource-name>.openai.azure.com
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
