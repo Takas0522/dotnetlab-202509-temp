@@ -29,9 +29,9 @@ jobs:
           ISSUE_BODY="${{ github.event.issue.body }}"
           ISSUE_TITLE="${{ github.event.issue.title }}"
           CODE_SUMMARY="context/code.tar.gz"
-          RESPONSE=$(curl -s -X POST "https://${{AZURE_OPENAI_ENDPOINT}}/openai/deployments/${{AZURE_OPENAI_DEPLOYMENT}}/chat/completions?api-version=${{AZURE_OPENAI_API_VERSION}}" \
+          RESPONSE=$(curl -s -X POST "https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION" \
             -H "Content-Type: application/json" \
-            -H "api-key: ${{ AZURE_OPENAI_API_KEY }}" \
+            -H "api-key: $AZURE_OPENAI_API_KEY" \
             -d '{
               "messages": [
                 {"role": "system", "content": "あなたは提供されたコードコンテキストに基づいて回答を提供するアシスタントです。"},
