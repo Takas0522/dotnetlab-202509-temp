@@ -24,22 +24,21 @@ jobs:
           
       - name: Collect Code Context
         run: |
-
           echo "Collecting code context..."
           mkdir -p context
           
-          # Broken pipeエラーを防ぐため、直接テキストファイルとして収集
+          # プロジェクト構造を収集
           echo "=== PROJECT STRUCTURE ===" > context/code_context.txt
           find src -type f \( -name "*.cs" -o -name "*.ts" -o -name "*.js" -o -name "*.json" -o -name "*.sql" -o -name "*.md" \) | head -20 >> context/code_context.txt
           
           echo -e "\n=== CODE CONTENT ===" >> context/code_context.txt
           
-          # 重要なファイルを優先して収集（Broken pipeを回避）
-          for file in $(find src -type f \( -name "*.cs" -o -name "*.ts" -o -name "*.js" \) | head -10); do
+          # 重要なファイルを優先して収集（安全にファイル内容を処理）
+          find src -type f \( -name "*.cs" -o -name "*.ts" -o -name "*.js" \) | head -10 | while read -r file; do
             if [ -f "$file" ]; then
               echo -e "\n--- $file ---" >> context/code_context.txt
-              # パイプを使わずに直接head処理
-              head -n 30 "$file" >> context/code_context.txt 2>/dev/null || true
+              # ファイル内容を安全に処理（特殊文字をエスケープ）
+              head -n 30 "$file" | sed 's/`/\\`/g' | sed 's/\$/\\$/g' >> context/code_context.txt 2>/dev/null || true
             fi
           done
           
@@ -80,8 +79,8 @@ jobs:
 
           # API呼び出し用のJSONペイロードを安全に構築
           echo "Creating JSON payload..."
-          SYSTEM_MSG="You are a helpful assistant that analyzes code and provides solutions. Respond in Japanese."
-          USER_MSG="Discussion Title: $DISCUSSION_TITLE_SAFE. Discussion Body: $DISCUSSION_BODY_SAFE. Code Context: $CODE_CONTEXT_SAFE. Based on the provided code context, please analyze the issue and provide a detailed solution or explanation."
+          SYSTEM_MSG="あなたは提供されたソースコードを詳細に分析し、具体的で実践的な解決策を提供するコード解析アシスタントです。必ず以下のルールに従って回答してください：1. 提供されたコードコンテキストを最優先で参照し、そのコードベースに基づいた具体的な解決策を提案する 2. 一般的な回答ではなく、実際のファイル名、クラス名、メソッド名を使用して具体的に説明する 3. コードの変更が必要な場合は、変更すべき具体的なファイルと行を指定する 4. 既存のアーキテクチャやパターンに合わせた解決策を提案する 5. 日本語で回答する コードコンテキストが提供されていない場合のみ、一般的なアドバイスを提供してください。"
+          USER_MSG="【Discussion】タイトル: $DISCUSSION_TITLE_SAFE 内容: $DISCUSSION_BODY_SAFE 【提供されたコードコンテキスト】$CODE_CONTEXT_SAFE 【指示】上記のコードコンテキストを詳細に分析し、discussionの内容に対して以下の観点から具体的な回答を提供してください：1. 提供されたコードの中で関連する部分の特定 2. 問題の原因分析（該当するファイル名・クラス名・メソッド名を明記）3. 具体的な修正方法（どのファイルのどの部分をどう変更するか）4. 変更後のコード例（可能であれば）5. 注意点や関連する影響範囲 必ず提供されたコードコンテキストに基づいて回答し、一般論ではなく、このプロジェクト特有の具体的な解決策を提示してください。"
           
           # jqを使用して安全なJSON構築
           JSON_PAYLOAD=$(jq -n \
@@ -99,11 +98,12 @@ jobs:
           echo "JSON payload created successfully"
           echo "Payload length: ${#JSON_PAYLOAD}"
           
-          # API呼び出し
+          # API呼び出し（レスポンス処理を改善）
           echo "Calling Azure OpenAI API..."
           echo "URL: https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION"
           
-          RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
+          # レスポンスとHTTPステータスコードを分離して取得
+          HTTP_CODE=$(curl -s -o response.json -w "%{http_code}" -X POST \
             "https://$AZURE_OPENAI_ENDPOINT/openai/deployments/$AZURE_OPENAI_DEPLOYMENT/chat/completions?api-version=$AZURE_OPENAI_API_VERSION" \
             -H "Content-Type: application/json" \
             -H "api-key: $AZURE_OPENAI_API_KEY" \
@@ -117,30 +117,43 @@ jobs:
             exit $curl_exit_code
           fi
           
-          # HTTPステータスコードとレスポンスを分離
-          HTTP_CODE=$(echo "$RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-          JSON_RESPONSE=$(echo "$RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
-          
           echo "HTTP Status Code: $HTTP_CODE"
-          echo "API Response: $JSON_RESPONSE"
+          
+          # レスポンス内容をログ出力（デバッグ用）
+          echo "Raw response:"
+          if [ -f response.json ]; then
+            head -c 500 response.json
+          else
+            echo "No response file found"
+          fi
           
           # HTTPステータスコードをチェック
           if [ "$HTTP_CODE" -ne 200 ]; then
             echo "API call failed with HTTP code: $HTTP_CODE"
-            echo "Response: $JSON_RESPONSE"
+            echo "Response:"
+            cat response.json 2>/dev/null || echo "No response content"
+            exit 1
+          fi
+          
+          # JSONレスポンスの妥当性をチェック
+          if ! jq empty response.json 2>/dev/null; then
+            echo "Invalid JSON response"
+            echo "Response content:"
+            cat response.json 2>/dev/null || echo "No response content"
             exit 1
           fi
           
           # JSONレスポンスの処理
-          if echo "$JSON_RESPONSE" | jq -e '.choices[0].message.content' > /dev/null 2>&1; then
-            AI_CONTENT=$(echo "$JSON_RESPONSE" | jq -r '.choices[0].message.content')
+          if jq -e '.choices[0].message.content' response.json > /dev/null 2>&1; then
+            AI_CONTENT=$(jq -r '.choices[0].message.content' response.json)
             echo "$AI_CONTENT" > ai_response.txt
             echo "response<<EOF" >> $GITHUB_OUTPUT
             echo "$AI_CONTENT" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           else
-            echo "Failed to parse API response"
-            echo "Response: $JSON_RESPONSE"
+            echo "Failed to extract content from API response"
+            echo "Response:"
+            cat response.json 2>/dev/null || echo "No response content"
             exit 1
           fi
         env:
