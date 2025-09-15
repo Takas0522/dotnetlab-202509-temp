@@ -19,6 +19,7 @@ jobs:
           fetch-depth: 0
       - name: Collect Code Context
         run: |
+          echo "Collecting code context..."
           mkdir context
           tar -czf context/code.tar.gz src
           ls -lh context
@@ -26,22 +27,8 @@ jobs:
       - name: Call Azure OpenAI API
         id: ai
         run: |
-          # 環境変数の確認
-          echo "Checking environment variables..."
-          echo "AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:0:20}..."
-          echo "AZURE_OPENAI_DEPLOYMENT: $AZURE_OPENAI_DEPLOYMENT"
-          echo "AZURE_OPENAI_API_VERSION: $AZURE_OPENAI_API_VERSION"
-          
-          # jqの存在確認
-          if ! command -v jq &> /dev/null; then
-            echo "jq is not installed, installing..."
-            sudo apt-get update && sudo apt-get install -y jq
-          fi
-          
-          ISSUE_BODY="${{ github.event.issue.body }}"
-          ISSUE_TITLE="${{ github.event.issue.title }}"
-          CODE_SUMMARY="context/code.tar.gz"
-          
+          # コードコンテキストを読み取る
+          CODE_SUMMARY=$(tar -xOzf context/code.tar.gz | head -c 8000 | jq -Rs .)
           # Issue内容をエスケープして安全にする  
           ISSUE_BODY_SAFE=$(echo "$ISSUE_BODY" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
           ISSUE_TITLE_SAFE=$(echo "$ISSUE_TITLE" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
@@ -59,11 +46,11 @@ jobs:
             -H "api-key: $AZURE_OPENAI_API_KEY" \
             --data-raw "{
               \"messages\": [
-                {\"role\": \"system\", \"content\": \"You are an assistant that provides answers based on code context. Please respond in Japanese.\"},
-                {\"role\": \"user\", \"content\": \"Issue Title: $ISSUE_TITLE_SAFE. Issue Body: $ISSUE_BODY_SAFE. Please provide a detailed answer based on the code context.\"}
+                {\"role\": \"system\", \"content\": \"You are a helpful assistant that analyzes code and provides solutions. Respond in Japanese. Here is the code context: $CODE_SUMMARY\"},
+                {\"role\": \"user\", \"content\": \"Issue Title: $ISSUE_TITLE_SAFE. Issue Body: $ISSUE_BODY_SAFE. Based on the provided code context, please analyze the issue and provide a detailed solution or explanation.\"}
               ],
-              \"max_tokens\": 500,
-              \"temperature\": 0.7
+              \"max_tokens\": 800,
+              \"temperature\": 0.3
             }")
           
           curl_exit_code=$?
