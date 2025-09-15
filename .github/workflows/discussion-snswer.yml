@@ -271,88 +271,61 @@ jobs:
               echo "Payload preview (first 200 chars):"
               echo "${JSON_PAYLOAD:0:200}..."
               
-              echo "Posting comment to GitHub API..."
-              echo "Repository: ${{ github.repository }}"
+              # GitHub Discussions はGraphQL APIを使用
+              echo "Posting comment via GraphQL API..."
+              echo "Repository: ${{ github.repository_owner }}/${{ github.event.repository.name }}"
               echo "Discussion number: ${{ github.event.discussion.number }}"
-              echo "API URL: repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments"
               
-              # GitHub CLI のバージョンを確認
-              gh --version
-              
-              # まずDiscussion自体の存在を確認
-              echo "Checking if discussion exists..."
-              gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }} > discussion_info.json 2>&1
-              if [ $? -eq 0 ]; then
-                echo "Discussion found:"
-                jq '.title, .body' discussion_info.json 2>/dev/null || cat discussion_info.json
-              else
-                echo "Discussion not found or error accessing it:"
-                cat discussion_info.json
-              fi
-              
-              # APIレスポンスを詳細に確認
-              echo "Attempting to post comment..."
-              echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \
-                --input - \
-                --verbose 2>&1 | tee api_response.txt
-              API_EXIT_CODE=$?
-              
-              echo "API call exit code: $API_EXIT_CODE"
-              echo "Full API response:"
-              cat api_response.txt
-              echo "--- End of API response ---"
-              
-              if [ $API_EXIT_CODE -eq 0 ]; then
-                echo "Comment posted successfully"
-              else
-                echo "Failed to post comment via GitHub REST API"
-                echo "Trying alternative methods..."
-                
-                # Method 1: GitHub CLI の discussions コマンドを試行
-                echo "Trying GitHub CLI discussions comment command..."
-                echo "$AI_RESPONSE" > comment_body.txt
-                gh api graphql -f query='
-                  query($owner: String!, $repo: String!, $number: Int!) {
-                    repository(owner: $owner, name: $repo) {
-                      discussion(number: $number) {
-                        id
-                        title
-                      }
+              # Discussion の Node ID を取得
+              echo "Getting discussion node ID..."
+              gh api graphql -f query='
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    discussion(number: $number) {
+                      id
+                      title
                     }
-                  }' -f owner="${{ github.repository_owner }}" -f repo="${{ github.event.repository.name }}" -F number=${{ github.event.discussion.number }} > discussion_query.json 2>&1
-                
-                echo "Discussion query result:"
-                cat discussion_query.json
-                
-                # GraphQL mutation を使用
+                  }
+                }' -f owner="${{ github.repository_owner }}" -f repo="${{ github.event.repository.name }}" -F number=${{ github.event.discussion.number }} > discussion_query.json 2>&1
+              
+              if [ $? -eq 0 ]; then
                 DISCUSSION_NODE_ID=$(jq -r '.data.repository.discussion.id' discussion_query.json)
                 echo "Discussion Node ID: $DISCUSSION_NODE_ID"
                 
                 if [ "$DISCUSSION_NODE_ID" != "null" ] && [ -n "$DISCUSSION_NODE_ID" ]; then
-                  echo "Using GraphQL mutation..."
+                  # GraphQL mutation でコメントを投稿
+                  echo "Posting comment via GraphQL mutation..."
                   gh api graphql -f query='
                     mutation($discussionId: ID!, $body: String!) {
                       addDiscussionComment(input: {discussionId: $discussionId, body: $body}) {
                         comment {
                           id
-                          body
+                          url
                         }
                       }
                     }' -f discussionId="$DISCUSSION_NODE_ID" -f body="$AI_RESPONSE" > graphql_result.json 2>&1
                   
-                  echo "GraphQL mutation result:"
-                  cat graphql_result.json
-                  
-                  if jq -e '.data.addDiscussionComment.comment.id' graphql_result.json > /dev/null 2>&1; then
-                    echo "Comment posted successfully via GraphQL!"
+                  if [ $? -eq 0 ] && jq -e '.data.addDiscussionComment.comment.id' graphql_result.json > /dev/null 2>&1; then
+                    COMMENT_URL=$(jq -r '.data.addDiscussionComment.comment.url' graphql_result.json)
+                    echo "Comment posted successfully!"
+                    echo "Comment URL: $COMMENT_URL"
                   else
-                    echo "GraphQL mutation failed"
+                    echo "Failed to post comment via GraphQL"
+                    echo "GraphQL response:"
+                    cat graphql_result.json
                     exit 1
                   fi
                 else
                   echo "Could not get discussion node ID"
+                  echo "Query response:"
+                  cat discussion_query.json
                   exit 1
                 fi
+              else
+                echo "Failed to query discussion"
+                echo "Query response:"
+                cat discussion_query.json
+                exit 1
               fi
             else
               echo "Failed to create JSON payload with jq"

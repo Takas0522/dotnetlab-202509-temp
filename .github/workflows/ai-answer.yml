@@ -169,10 +169,22 @@ jobs:
             echo "JSON payload created successfully"
             echo "Payload length: ${#JSON_PAYLOAD}"
             
-            # GitHub APIを使用してコメント投稿
-            echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --input -
+            # GitHub Issues API を使用してコメント投稿
+            echo "Posting comment via GitHub Issues API..."
+            echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments --input - > issue_comment_result.json 2>&1
             
-            echo "Comment posted successfully"
+            if [ $? -eq 0 ]; then
+              echo "Comment posted successfully to issue!"
+              if [ -f issue_comment_result.json ]; then
+                COMMENT_URL=$(jq -r '.html_url' issue_comment_result.json 2>/dev/null || echo "URL not available")
+                echo "Comment URL: $COMMENT_URL"
+              fi
+            else
+              echo "Failed to post comment to issue"
+              echo "API response:"
+              cat issue_comment_result.json
+              exit 1
+            fi
           else
             echo "No AI response file found"
             gh api repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/comments \
