@@ -271,15 +271,81 @@ jobs:
               echo "Payload preview (first 200 chars):"
               echo "${JSON_PAYLOAD:0:200}..."
               
-              # GitHub APIを使用してコメント投稿
               echo "Posting comment to GitHub API..."
-              echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments --input -
+              echo "Repository: ${{ github.repository }}"
+              echo "Discussion number: ${{ github.event.discussion.number }}"
+              echo "API URL: repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments"
               
+              # GitHub CLI のバージョンを確認
+              gh --version
+              
+              # まずDiscussion自体の存在を確認
+              echo "Checking if discussion exists..."
+              gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }} > discussion_info.json 2>&1
               if [ $? -eq 0 ]; then
+                echo "Discussion found:"
+                jq '.title, .body' discussion_info.json 2>/dev/null || cat discussion_info.json
+              else
+                echo "Discussion not found or error accessing it:"
+                cat discussion_info.json
+              fi
+              
+              # APIレスポンスを詳細に確認
+              echo "Attempting to post comment..."
+              echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \
+                --input - \
+                --verbose > api_response.txt 2>&1
+              API_EXIT_CODE=$?
+              
+              echo "API call exit code: $API_EXIT_CODE"
+              echo "API response:"
+              cat api_response.txt
+              
+              if [ $API_EXIT_CODE -eq 0 ]; then
                 echo "Comment posted successfully"
               else
                 echo "Failed to post comment via GitHub API"
-                exit 1
+                echo "Trying alternative methods..."
+                
+                # Method 1: GraphQL API を試行
+                echo "Trying GraphQL API..."
+                DISCUSSION_ID="${{ github.event.discussion.node_id }}"
+                echo "Discussion Node ID: $DISCUSSION_ID"
+                
+                GRAPHQL_QUERY='{
+                  "query": "mutation($discussionId: ID!, $body: String!) { addDiscussionComment(input: {discussionId: $discussionId, body: $body}) { comment { id } } }",
+                  "variables": {
+                    "discussionId": "'$DISCUSSION_ID'",
+                    "body": "'"$(echo "$AI_RESPONSE" | sed 's/"/\\"/g' | tr '\n' '\\n')"'"
+                  }
+                }'
+                
+                echo "$GRAPHQL_QUERY" | gh api graphql --input - > graphql_response.txt 2>&1
+                
+                if [ $? -eq 0 ]; then
+                  echo "Comment posted successfully via GraphQL"
+                  cat graphql_response.txt
+                else
+                  echo "GraphQL method also failed:"
+                  cat graphql_response.txt
+                  
+                  # Method 2: ファイル経由で再試行
+                  echo "Trying file-based method..."
+                  echo "$AI_RESPONSE" > comment_body.txt
+                  gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \
+                    --field body=@comment_body.txt > file_response.txt 2>&1
+                  
+                  if [ $? -eq 0 ]; then
+                    echo "Comment posted successfully with file method"
+                    cat file_response.txt
+                  else
+                    echo "All methods failed:"
+                    cat file_response.txt
+                    echo "Checking user permissions..."
+                    gh api user
+                    exit 1
+                  fi
+                fi
               fi
             else
               echo "Failed to create JSON payload with jq"
