@@ -12,7 +12,7 @@ ASP.NET Core Web APIを使用して構築されたToDoアプリケーション�
 
 ## 技術スタック
 
-- **フレームワーク**: ASP.NET Core 9.0
+- **フレームワーク**: ASP.NET Core 8.0
 - **ORM**: Entity Framework Core
 - **データベース**: SQL Server / Azure SQL Database
 - **認証**: Azure Entra ID (JWT Bearer)
@@ -92,7 +92,7 @@ Authorization: Bearer <your-jwt-token>
 ## セットアップ
 
 ### 前提条件
-- .NET 9.0 SDK
+- .NET 8.0 SDK
 - SQL Server または SQL Server LocalDB
 - Azure Entra IDテナント
 
@@ -165,7 +165,12 @@ Entity Framework Coreを使用してSQL Serverと接続しています。モデ�
 
 3. **ビルドエラー**
    - 必要なパッケージがインストールされていることを確認
-   - .NET 9.0 SDKがインストールされていることを確認
+   - .NET 8.0 SDKがインストールされていることを確認
+
+4. **パフォーマンス問題**
+   - API応答時間が異常に遅い場合は、コントローラーに意図的な遅延（`Task.Delay`）が含まれていないか確認
+   - Application Insights Performance Middlewareがパフォーマンスメトリクスを収集しているため、ログを確認
+   - 2025/09/15の事例: `POST /api/tags`で5-10秒の意図的な遅延がテスト目的で残されていた
 
 ## ライセンス
 
