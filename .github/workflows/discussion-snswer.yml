@@ -169,8 +169,18 @@ jobs:
           if jq -e '.choices[0].message.content' response.json > /dev/null 2>&1; then
             AI_CONTENT=$(jq -r '.choices[0].message.content' response.json)
             echo "$AI_CONTENT" > ai_response.txt
+            echo "AI response saved to file. Length: ${#AI_CONTENT}"
+            
+            # GitHub Actionsの出力変数用に安全にエスケープ
+            AI_CONTENT_ESCAPED=$(echo "$AI_CONTENT" | \
+              sed 's/`/\\`/g' | \
+              sed 's/\\/\\\\/g' | \
+              sed 's/"/\\"/g' | \
+              tr -d '\000-\037' | \
+              tr '\n' ' ')
+            
             echo "response<<EOF" >> $GITHUB_OUTPUT
-            echo "$AI_CONTENT" >> $GITHUB_OUTPUT
+            echo "$AI_CONTENT_ESCAPED" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           else
             echo "Failed to extract content from API response"
@@ -188,7 +198,25 @@ jobs:
 
       - name: Post AI Response as Comment
         run: |
+          # AI回答を安全にエスケープしてからコメント投稿
+          if [ -f ai_response.txt ]; then
+            # バッククォートとその他の特殊文字を適切にエスケープ
+            AI_RESPONSE_ESCAPED=$(cat ai_response.txt | \
+              sed 's/`/\\`/g' | \
+              sed 's/\\/\\\\/g' | \
+              sed 's/"/\\"/g' | \
+              sed "s/'/\\'/g")
+            
+            echo "Posting AI response as comment..."
+            echo "Response length: ${#AI_RESPONSE_ESCAPED}"
+            
+            # jqを使用して安全にJSONペイロードを構築
             gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \
-              -f body="${{ steps.ai.outputs.response }}"
+              --input - <<< "$(jq -n --arg body "$AI_RESPONSE_ESCAPED" '{body: $body}')"
+          else
+            echo "No AI response file found"
+            gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \
+              -f body="AI回答の生成に失敗しました。ログを確認してください。"
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
