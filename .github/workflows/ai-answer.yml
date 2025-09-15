@@ -19,16 +19,44 @@ jobs:
           fetch-depth: 0
       - name: Collect Code Context
         run: |
+
           echo "Collecting code context..."
-          mkdir context
-          tar -czf context/code.tar.gz src
-          ls -lh context
+          mkdir -p context
+          
+          # Broken pipeエラーを防ぐため、直接テキストファイルとして収集
+          echo "=== PROJECT STRUCTURE ===" > context/code_context.txt
+          find src -type f \( -name "*.cs" -o -name "*.ts" -o -name "*.js" -o -name "*.json" -o -name "*.sql" -o -name "*.md" \) | head -20 >> context/code_context.txt
+          
+          echo -e "\n=== CODE CONTENT ===" >> context/code_context.txt
+          
+          # 重要なファイルを優先して収集（Broken pipeを回避）
+          for file in $(find src -type f \( -name "*.cs" -o -name "*.ts" -o -name "*.js" \) | head -10); do
+            if [ -f "$file" ]; then
+              echo -e "\n--- $file ---" >> context/code_context.txt
+              # パイプを使わずに直接head処理
+              head -n 30 "$file" >> context/code_context.txt 2>/dev/null || true
+            fi
+          done
+          
+          # ファイルサイズを制限（4KB以内）
+          if [ -f context/code_context.txt ]; then
+            head -c 4000 context/code_context.txt > context/code_summary.txt
+            echo "Code context collected. Size: $(wc -c < context/code_summary.txt) bytes"
+          else
+            echo "No code context available" > context/code_summary.txt
+          fi
 
       - name: Call Azure OpenAI API
         id: ai
         run: |
-          # コードコンテキストを読み取る
-          CODE_SUMMARY=$(tar -xOzf context/code.tar.gz | head -c 8000 | jq -Rs .)
+          # コードコンテキストを安全に読み取り（Broken pipeを回避）
+          if [ -f context/code_summary.txt ]; then
+            CODE_CONTEXT=$(cat context/code_summary.txt)
+            echo "Code context loaded. Length: ${#CODE_CONTEXT}"
+          else
+            CODE_CONTEXT="No code context available"
+            echo "No code context file found"
+          fi
           # Issue内容をエスケープして安全にする  
           ISSUE_BODY_SAFE=$(echo "$ISSUE_BODY" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
           ISSUE_TITLE_SAFE=$(echo "$ISSUE_TITLE" | tr '"' "'" | tr '\n' ' ' | tr '\r' ' ')
