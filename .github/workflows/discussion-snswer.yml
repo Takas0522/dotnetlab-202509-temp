@@ -165,11 +165,45 @@ jobs:
             exit 1
           fi
           
+          echo "JSON response is valid"
+          
+          # レスポンス構造をデバッグ出力
+          echo "Response structure:"
+          jq 'keys' response.json 2>/dev/null || echo "Failed to get response keys"
+          
+          if jq -e '.choices' response.json > /dev/null 2>&1; then
+            echo "Choices array found"
+            echo "Number of choices: $(jq '.choices | length' response.json 2>/dev/null)"
+          else
+            echo "No choices array found in response"
+            echo "Full response content:"
+            cat response.json
+            exit 1
+          fi
+          
           # JSONレスポンスの処理
           if jq -e '.choices[0].message.content' response.json > /dev/null 2>&1; then
             AI_CONTENT=$(jq -r '.choices[0].message.content' response.json)
+            echo "AI content extracted successfully"
+            echo "AI response length: ${#AI_CONTENT}"
+            echo "First 200 characters of AI response:"
+            echo "${AI_CONTENT:0:200}..."
+            
+            # ファイルに保存
             echo "$AI_CONTENT" > ai_response.txt
-            echo "AI response saved to file. Length: ${#AI_CONTENT}"
+            echo "AI response saved to file"
+            
+            # ファイルが正常に作成されたかチェック
+            if [ -f ai_response.txt ]; then
+              echo "ai_response.txt created successfully"
+              echo "File size: $(wc -c < ai_response.txt) bytes"
+              echo "File content preview (first 100 chars):"
+              head -c 100 ai_response.txt
+              echo ""
+            else
+              echo "Failed to create ai_response.txt"
+              exit 1
+            fi
             
             # GitHub Actionsの出力変数用に安全にエスケープ
             AI_CONTENT_ESCAPED=$(echo "$AI_CONTENT" | \
@@ -182,10 +216,11 @@ jobs:
             echo "response<<EOF" >> $GITHUB_OUTPUT
             echo "$AI_CONTENT_ESCAPED" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
+            echo "GitHub Actions output variable set"
           else
             echo "Failed to extract content from API response"
-            echo "Response:"
-            cat response.json 2>/dev/null || echo "No response content"
+            echo "Response structure for debugging:"
+            jq '.' response.json 2>/dev/null || cat response.json
             exit 1
           fi
         env:
@@ -198,27 +233,64 @@ jobs:
 
       - name: Post AI Response as Comment
         run: |
+          echo "=== COMMENT POSTING DEBUG ==="
+          echo "Current working directory: $(pwd)"
+          echo "Files in current directory:"
+          ls -la
+          
           # AI回答を安全に投稿
           if [ -f ai_response.txt ]; then
-            echo "Posting AI response as comment..."
+            echo "ai_response.txt found"
             echo "Response file size: $(wc -c < ai_response.txt) bytes"
+            echo "Response file line count: $(wc -l < ai_response.txt) lines"
             
-            # AI回答をファイルから直接読み取り、jqでJSONエスケープ
+            # ファイル内容の確認
+            echo "=== FILE CONTENT DEBUG ==="
+            echo "First 300 characters of ai_response.txt:"
+            head -c 300 ai_response.txt
+            echo ""
+            echo "=== END FILE CONTENT ==="
+            
+            # AI回答をファイルから直接読み取り
             AI_RESPONSE=$(cat ai_response.txt)
-            echo "Raw response length: ${#AI_RESPONSE}"
+            echo "Raw response loaded. Length: ${#AI_RESPONSE}"
+            
+            # 特殊文字の確認
+            echo "Checking for special characters:"
+            echo "Contains backticks: $(echo "$AI_RESPONSE" | grep -c '`' || echo 0)"
+            echo "Contains quotes: $(echo "$AI_RESPONSE" | grep -c '"' || echo 0)"
+            echo "Contains newlines: $(echo "$AI_RESPONSE" | grep -c $'\n' || echo 0)"
             
             # jqを使用して安全にJSONペイロードを作成
+            echo "Creating JSON payload with jq..."
             JSON_PAYLOAD=$(jq -n --arg content "$AI_RESPONSE" '{body: $content}')
             
-            echo "JSON payload created successfully"
-            echo "Payload length: ${#JSON_PAYLOAD}"
-            
-            # GitHub APIを使用してコメント投稿
-            echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments --input -
-            
-            echo "Comment posted successfully"
+            if [ $? -eq 0 ]; then
+              echo "JSON payload created successfully"
+              echo "Payload length: ${#JSON_PAYLOAD}"
+              echo "Payload preview (first 200 chars):"
+              echo "${JSON_PAYLOAD:0:200}..."
+              
+              # GitHub APIを使用してコメント投稿
+              echo "Posting comment to GitHub API..."
+              echo "$JSON_PAYLOAD" | gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments --input -
+              
+              if [ $? -eq 0 ]; then
+                echo "Comment posted successfully"
+              else
+                echo "Failed to post comment via GitHub API"
+                exit 1
+              fi
+            else
+              echo "Failed to create JSON payload with jq"
+              echo "Error occurred while processing AI response"
+              exit 1
+            fi
           else
-            echo "No AI response file found"
+            echo "ai_response.txt not found"
+            echo "Files in current directory:"
+            ls -la
+            echo "Posting error message..."
             gh api repos/${{ github.repository }}/discussions/${{ github.event.discussion.number }}/comments \
               -f body="AI回答の生成に失敗しました。ログを確認してください。"
           fi
