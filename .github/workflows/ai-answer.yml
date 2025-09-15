@@ -49,6 +49,14 @@ jobs:
       - name: Call Azure OpenAI API
         id: ai
         run: |
+          # 環境変数の確認
+          echo "Checking environment variables..."
+          echo "AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:0:20}..."
+          echo "AZURE_OPENAI_DEPLOYMENT: $AZURE_OPENAI_DEPLOYMENT"
+          echo "AZURE_OPENAI_API_VERSION: $AZURE_OPENAI_API_VERSION"
+          echo "ISSUE_TITLE: ${ISSUE_TITLE:0:50}..."
+          echo "ISSUE_BODY length: ${#ISSUE_BODY}"
+          
           # コードコンテキストを安全に読み取り（Broken pipeを回避）
           if [ -f context/code_summary.txt ]; then
             CODE_CONTEXT=$(cat context/code_summary.txt)
@@ -74,7 +82,7 @@ jobs:
             -H "api-key: $AZURE_OPENAI_API_KEY" \
             --data-raw "{
               \"messages\": [
-                {\"role\": \"system\", \"content\": \"You are a helpful assistant that analyzes code and provides solutions. Respond in Japanese. Here is the code context: $CODE_SUMMARY\"},
+                {\"role\": \"system\", \"content\": \"You are a helpful assistant that analyzes code and provides solutions. Respond in Japanese. Here is the code context: $CODE_CONTEXT\"},
                 {\"role\": \"user\", \"content\": \"Issue Title: $ISSUE_TITLE_SAFE. Issue Body: $ISSUE_BODY_SAFE. Based on the provided code context, please analyze the issue and provide a detailed solution or explanation.\"}
               ],
               \"max_tokens\": 800,
@@ -120,6 +128,8 @@ jobs:
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }} # Azureで作成したモデルのデプロイ名
           AZURE_OPENAI_API_VERSION: "2025-01-01-preview"
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
 
       - name: Post AI Response as Comment
         run: gh issue comment ${{ github.event.issue.number }} --body "${{ steps.ai.outputs.response }}"
