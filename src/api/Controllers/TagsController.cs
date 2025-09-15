@@ -82,7 +82,8 @@ public class TagsController : ControllerBase
         var userId = _currentUserService.GetUserId();
         if (!userId.HasValue)
         {
-            return Unauthorized();
+            _logger.LogWarning("User not found or not authenticated when creating tag");
+            return Unauthorized("User not found. Please ensure you are logged in.");
         }
 
         try
@@ -99,6 +100,7 @@ public class TagsController : ControllerBase
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Error creating tag for user {UserId}", userId);
             return BadRequest(ex.Message);
         }
     }

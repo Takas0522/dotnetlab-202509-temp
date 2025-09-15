@@ -1,0 +1,54 @@
+name: AI Answer on Issue 
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  ai-answer:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Collect Code Context
+        run: |
+          mkdir context
+          tar -czf context/code.tar.gz src
+          ls -lh context
+
+      - name: Call Azure OpenAI API
+        id: ai
+        run: |
+          ISSUE_BODY="${{ github.event.issue.body }}"
+          ISSUE_TITLE="${{ github.event.issue.title }}"
+          CODE_SUMMARY="context/code.tar.gz"
+          RESPONSE=$(curl -s -X POST "https://${{AZURE_OPENAI_ENDPOINT}}/openai/deployments/${{AZURE_OPENAI_DEPLOYMENT}}/chat/completions?api-version=${{AZURE_OPENAI_API_VERSION}}" \
+            -H "Content-Type: application/json" \
+            -H "api-key: ${{ AZURE_OPENAI_API_KEY }}" \
+            -d '{
+              "messages": [
+                {"role": "system", "content": "あなたは提供されたコードコンテキストに基づいて回答を提供するアシスタントです。"},
+                {"role": "user", "content": "Issueタイトルは: '"$ISSUE_TITLE"'. Issueボディは: '"$ISSUE_BODY"'. 提供されたコードコンテキストに基づいて、問題に対する詳細な回答を提供してください。"}
+              ],
+              "max_tokens": 500,
+              "temperature": 0.7
+            }')
+          echo "$RESPONSE" | jq -r '.choices[0].message.content' > ai_response.txt
+          echo "::set-output name=response::$(cat ai_response.txt)"
+        env:
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }} # 例: https://<your-resource-name>.openai.azure.com
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }} # Azureで作成したモデルのデプロイ名
+          AZURE_OPENAI_API_VERSION: "2025-01-01-preview"
+
+      - name: Post AI Response as Comment
+        run: gh issue comment ${{ github.event.issue.number }} --body "${{ steps.ai.outputs.response }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

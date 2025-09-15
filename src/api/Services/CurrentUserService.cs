@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using Microsoft.EntityFrameworkCore;
+using api.Data;
 
 namespace api.Services;
 
@@ -14,36 +16,28 @@ public interface ICurrentUserService
 public class CurrentUserService : ICurrentUserService
 {
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly TodoDbContext _context;
 
-    public CurrentUserService(IHttpContextAccessor httpContextAccessor)
+    public CurrentUserService(IHttpContextAccessor httpContextAccessor, TodoDbContext context)
     {
         _httpContextAccessor = httpContextAccessor;
+        _context = context;
     }
 
     public Guid? GetUserId()
     {
-        // まずカスタムUserIdクレームを確認
-        var userIdClaim = _httpContextAccessor.HttpContext?.User?.FindFirst("UserId")?.Value;
-        if (Guid.TryParse(userIdClaim, out var userId))
+        var entraId = GetUserEntraId();
+        if (string.IsNullOrEmpty(entraId))
         {
-            return userId;
+            return null;
         }
 
-        // Azure AD v2.0のoidクレームを確認（標準形式）
-        var oidClaim = _httpContextAccessor.HttpContext?.User?.FindFirst("oid")?.Value;
-        if (Guid.TryParse(oidClaim, out var oid))
-        {
-            return oid;
-        }
+        // Entra IDから実際のUsers.UserIdを取得
+        var user = _context.Users
+            .Where(u => u.EntraId == entraId && u.IsActive)
+            .FirstOrDefault();
 
-        // Azure AD v2.0のobjectidentifierクレームを確認（完全URI形式）
-        var objectIdentifierClaim = _httpContextAccessor.HttpContext?.User?.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value;
-        if (Guid.TryParse(objectIdentifierClaim, out var objectIdentifier))
-        {
-            return objectIdentifier;
-        }
-
-        return null;
+        return user?.UserId;
     }
 
     public string? GetUserEntraId()

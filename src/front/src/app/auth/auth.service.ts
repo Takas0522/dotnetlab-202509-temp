@@ -13,6 +13,7 @@ import {
 import { Subject, filter, takeUntil } from 'rxjs';
 import { msalConfig, loginRequest as defaultLoginRequest } from './auth-config';
 import { ApplicationInsightsService } from '../services/application-insights.service';
+import { UserService } from '../shared/services/user.service';
 
 @Injectable({
   providedIn: 'root'
@@ -21,6 +22,7 @@ export class AuthService {
   private readonly msalInstance = new PublicClientApplication(msalConfig);
   private readonly router = inject(Router);
   private readonly appInsights = inject(ApplicationInsightsService);
+  private readonly userService = inject(UserService);
   private readonly destroy$ = new Subject<void>();
   private _initializationPromise: Promise<void> | null = null;
   
@@ -118,6 +120,25 @@ export class AuthService {
     
     // 認証状態が変更された場合（未認証 → 認証済み）にダッシュボードにリダイレクト
     if (!wasAuthenticated && !!activeAccount) {
+      this.handleUserLogin();
+    }
+  }
+
+  private async handleUserLogin(): Promise<void> {
+    try {
+      // ユーザー情報を取得または作成
+      await this.userService.getCurrentUser().toPromise();
+      console.log('User registration/retrieval successful');
+      
+      // ダッシュボードにリダイレクト
+      this.navigateToDefaultPage();
+    } catch (error) {
+      console.error('Failed to register/retrieve user:', error);
+      
+      // Application Insightsにエラーを記録
+      this.appInsights.trackException(error instanceof Error ? error : new Error(String(error)));
+      
+      // エラーが発生してもダッシュボードにリダイレクト（ユーザー体験を優先）
       this.navigateToDefaultPage();
     }
   }
