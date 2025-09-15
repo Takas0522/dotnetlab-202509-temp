@@ -67,19 +67,6 @@ builder.Services.AddSwaggerGen(c =>
     }
 });
 
-// Configure CORS
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowSpecificOrigins",
-        policy =>
-        {
-            policy.WithOrigins("http://localhost:3000", "https://localhost:3000") // React dev server
-                  .AllowAnyHeader()
-                  .AllowAnyMethod()
-                  .AllowCredentials();
-        });
-});
-
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -100,13 +87,8 @@ app.UseCors("AllowSpecificOrigins");
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers();
+app.MapGet("/", () => Results.Ok(new { Status = "API is running", Timestamp = DateTime.UtcNow }));
 
-// Ensure database is created
-using (var scope = app.Services.CreateScope())
-{
-    var context = scope.ServiceProvider.GetRequiredService<TodoDbContext>();
-    context.Database.EnsureCreated();
-}
+app.MapControllers();
 
 app.Run();
