@@ -87,14 +87,9 @@ public class TagsController : ControllerBase
 
         try
         {
-            // Application Insights用の意図的な遅延（3-5秒）
-            _logger.LogInformation("Creating tag with intentional delay for Application Insights testing");
-            var delayMilliseconds = Random.Shared.Next(5000, 10001); // 5-10秒のランダム遅延
-            _logger.LogInformation("Applying delay of {DelayMs}ms to tag creation", delayMilliseconds);
-            await Task.Delay(delayMilliseconds);
-
+            _logger.LogInformation("Creating tag for user {UserId}", userId.Value);
             var tag = await _tagService.CreateTagAsync(userId.Value, createTagDto);
-            _logger.LogInformation("Tag created successfully after {DelayMs}ms delay", delayMilliseconds);
+            _logger.LogInformation("Tag created successfully with ID {TagId}", tag.TagId);
             return CreatedAtAction(nameof(GetTag), new { tagId = tag.TagId }, tag);
         }
         catch (Exception ex)
